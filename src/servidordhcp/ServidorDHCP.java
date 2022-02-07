@@ -14,9 +14,12 @@ public class ServidorDHCP {
     private static int tiempoCesion = 6000;
     private static int tiempoRenovacion = 3000;
     private static byte[] mac = new byte[6];
-    private static byte[] ipCliente = {10, 0, 2, 26};
-    private static byte[] router = {10, 0, 2, 1};
-    private static byte[] servidor = {10, 0, 2, (byte) 201};
+    private static byte[] ipCliente = getByteIP("10.0.2.35");
+    private static byte[] router = getByteIP("10.0.2.1");
+    private static String ipServidor = "10.0.2.201";
+    private static byte[] servidor = getByteIP(ipServidor);    
+    private static byte[] dns = getByteIP("8.8.8.8");
+    private static byte[] mascara = getByteIP("255.255.255.0");
     private static int id;
 
     public static void main(String[] args) {
@@ -24,38 +27,29 @@ public class ServidorDHCP {
         System.out.println("Esperando mensaje...");
         try {
             boolean salir = false;
-            int puerto = 67;
-            DatagramSocket socket = new DatagramSocket(puerto);
+            int puertoRecibir = 67;
+            int puertoEnviar = 68;
+            DatagramSocket socket = new DatagramSocket(puertoRecibir, InetAddress.getByName(ipServidor));
             while (!salir) {
                 //DHCPDiscover
-                byte[] buffer = new byte[567];
-                DatagramPacket paquete = new DatagramPacket(buffer, buffer.length);
-                socket.receive(paquete);
-                byte type = parsearInfo(paquete.getData());
+                byte type = parsearInfo(recibirMensaje(socket));
                 if (type == 1) {
                     System.out.println("Discover recibido");
-                }
-                //DHCPOffer                
-                byte[] respuesta = generarMensaje((short) 1, (short) 2);
-                DatagramPacket paqueteEnviar = new DatagramPacket(respuesta, respuesta.length,
-                        InetAddress.getByName("255.255.255.255"), 68);
-                socket.send(paqueteEnviar);
-                System.out.println("Offer");
-                //DHCPRequest            
-                buffer = new byte[567];
-                paquete = new DatagramPacket(buffer, buffer.length);
-                socket.receive(paquete);
-                type = parsearInfo(paquete.getData());
-                if (type == 3) {
-                    System.out.println("Request");
-                    salir = true;
+                    //DHCPOffer             
+                    enviarMensaje("255.255.255.255", socket,
+                            puertoEnviar, generarMensaje((short) 1, (short) 2));
+                    System.out.println("Offer");
+                    //DHCPRequest           
+                    type = parsearInfo(recibirMensaje(socket));
+                    if (type == 3) {
+                        System.out.println("Request");
+                        salir = true;
+                    }
                 }
             }
             //DHCPAck
-            byte[] respuesta = generarMensaje((short) 1, (short) 5);
-            DatagramPacket paqueteEnviar = new DatagramPacket(respuesta, respuesta.length,
-                    InetAddress.getByName("255.255.255.255"), 68);
-            socket.send(paqueteEnviar);
+            enviarMensaje("255.255.255.255", socket,
+                            puertoEnviar, generarMensaje((short) 1, (short) 5));
             System.out.println("Ack");
 
         } catch (SocketException ex) {
@@ -65,18 +59,45 @@ public class ServidorDHCP {
         }
         System.out.println("IP configurada");
     }
+    
+    private static byte [] recibirMensaje(DatagramSocket s){
+        byte[] buffer = new byte[567];
+        DatagramPacket paquete = new DatagramPacket(buffer, buffer.length);
+        try {
+            s.receive(paquete);
+        } catch (IOException ex) {
+            Logger.getLogger(ServidorDHCP.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        return buffer;    
+    }
+    
+    private static void enviarMensaje(String direccion, DatagramSocket s,
+            int puerto, byte [] respuesta){
+        try {
+            DatagramPacket paqueteEnviar = new DatagramPacket(respuesta, respuesta.length,
+                    InetAddress.getByName(direccion), puerto);
+            s.send(paqueteEnviar);
+        } catch (IOException ex) {
+            Logger.getLogger(ServidorDHCP.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
+    
+    private static byte [] getByteIP(String ip){
+        String[] dir = ip.split("\\.");
+        byte[] devolver = new byte[dir.length];
+        for (int i = 0; i < dir.length; i++) {
+            devolver[i] = (byte) Integer.parseInt(dir[i]);
+        }
+        return devolver;        
+    }
 
     private static byte parsearInfo(byte[] data) {
         ByteBuffer bBuffer = ByteBuffer.wrap(data);
 
         id = bBuffer.getInt(4);
-        System.out.println("Id: " + Integer.toHexString(id));
 
         for (int i = 28; i < 34; i++) {
-//            System.out.print(String.format("%02X ", bBuffer.get(i)));
             mac[i - 28] = bBuffer.get(i);
-//            if(i < 33)
-//                System.out.print(":");
         }
 
         int puntero = 240;
@@ -112,28 +133,20 @@ public class ServidorDHCP {
         //Mascara de subred
         mensaje.put((byte) 1);
         mensaje.put((byte) 4);
-        for (int i = 0; i < 3; ++i) {
-            mensaje.put((byte) 255);
-        }
+        mensaje.put(mascara);
         mensaje.put((byte) 0);
         //DNS
         mensaje.put((byte) 6);
         mensaje.put((byte) 4);
-        for (int i = 0; i < 4; ++i) {
-            mensaje.put((byte) 8);
-        }
+        mensaje.put(dns);
         //Router
         mensaje.put((byte) 3);
         mensaje.put((byte) 4);
-        for (byte r : router) {
-            mensaje.put(r);
-        }
+        mensaje.put(router);
 //        //IP Cliente
         mensaje.put((byte) 50);
         mensaje.put((byte) 4);
-        for (byte i : ipCliente) {
-            mensaje.put(i);
-        }
+        mensaje.put(ipCliente);
 //        Tiempo de cesion(60s)
         mensaje.put((byte) 51);
         mensaje.put((byte) 4);
@@ -145,9 +158,7 @@ public class ServidorDHCP {
         //IP Servidor
         mensaje.put((byte) 54);
         mensaje.put((byte) 4);
-        for (byte i : servidor) {
-            mensaje.put(i);
-        }
+        mensaje.put(servidor);
         //END
         mensaje.put((byte) 255);
 
@@ -174,17 +185,13 @@ public class ServidorDHCP {
         //ciaddr
         mensaje.putInt(0);
         //yiaddr
-        for (byte c : ipCliente) {
-            mensaje.put(c);
-        }
+        mensaje.put(ipCliente);
         //siaddr
         mensaje.putInt(0);
         //giaddr
         mensaje.putInt(0);
         //chaddr (mac)
-        for (byte c : mac) {
-            mensaje.put(c);
-        }
+        mensaje.put(mac);
         return mensaje.array();
     }
 
