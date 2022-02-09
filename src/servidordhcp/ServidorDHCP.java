@@ -13,9 +13,9 @@ public class ServidorDHCP {
 
     private static int tiempoCesion = 6000;
     private static int tiempoRenovacion = 3000;
-    private static byte[] mac = new byte[6];
+    private static byte[] macCliente = new byte[6];
     private static byte[] ipCliente = getByteIP("10.0.2.35");
-    private static byte[] router = getByteIP("10.0.2.1");
+    private static byte[] ipRouter = getByteIP("10.0.2.1");
     private static String ipServidor = "10.0.2.201";
     private static byte[] servidor = getByteIP(ipServidor);    
     private static byte[] dns = getByteIP("8.8.8.8");
@@ -30,9 +30,14 @@ public class ServidorDHCP {
             int puertoRecibir = 67;
             int puertoEnviar = 68;
             DatagramSocket socket = new DatagramSocket(puertoRecibir, InetAddress.getByName(ipServidor));
+            //Se inica un bucle para asegurar que recibimos los mensajes esperados
             while (!salir) {
                 //DHCPDiscover
-                byte type = parsearInfo(recibirMensaje(socket));
+                byte[] mensaje = recibirMensaje(socket);
+                configurarMacId(mensaje);
+                byte type = getType(mensaje);
+                //Si recibe el discover procede a enviar el mensaje, si no
+                //continua esperando el discover
                 if (type == 1) {
                     System.out.println("Discover recibido");
                     //DHCPOffer             
@@ -40,7 +45,9 @@ public class ServidorDHCP {
                             puertoEnviar, generarMensaje((short) 1, (short) 2));
                     System.out.println("Offer");
                     //DHCPRequest           
-                    type = parsearInfo(recibirMensaje(socket));
+                    type = getType(recibirMensaje(socket));
+                    //Si recibe el resquest sale del bucle para enviar ACK
+                    //Si no esperara un nuevo discover
                     if (type == 3) {
                         System.out.println("Request");
                         salir = true;
@@ -60,6 +67,8 @@ public class ServidorDHCP {
         System.out.println("IP configurada");
     }
     
+    //Recibe el paquete atraves del socket que recibe por parametro
+    //y devuelve un array de bytes con su contenido
     private static byte [] recibirMensaje(DatagramSocket s){
         byte[] buffer = new byte[567];
         DatagramPacket paquete = new DatagramPacket(buffer, buffer.length);
@@ -71,6 +80,9 @@ public class ServidorDHCP {
         return buffer;    
     }
     
+    //Recibe por parametro la direccion, el puerto y el mensaje que va a enviar.
+    //Compone el DatagramPaquet y lo envia por el Socket que le entregemos
+    //por parametro
     private static void enviarMensaje(String direccion, DatagramSocket s,
             int puerto, byte [] respuesta){
         try {
@@ -82,33 +94,48 @@ public class ServidorDHCP {
         }
     }
     
+    //Recibe una ip en String por parametro y devuelve un array de cuatro bytes 
+    //con cada byte de la direccion
     private static byte [] getByteIP(String ip){
+        //Se separa por puntos
         String[] dir = ip.split("\\.");
         byte[] devolver = new byte[dir.length];
         for (int i = 0; i < dir.length; i++) {
+            //Se guarda en cada posicion el valor de cada byte 
             devolver[i] = (byte) Integer.parseInt(dir[i]);
         }
         return devolver;        
     }
 
-    private static byte parsearInfo(byte[] data) {
+    //Recibe por parametro el array de bytes con el mensaje recibido.
+    //Obtiene y configura el id de transaccion y la mac del cliente 
+    private static void configurarMacId(byte[] data) {
         ByteBuffer bBuffer = ByteBuffer.wrap(data);
 
         id = bBuffer.getInt(4);
 
         for (int i = 28; i < 34; i++) {
-            mac[i - 28] = bBuffer.get(i);
+            macCliente[i - 28] = bBuffer.get(i);
         }
-
+    }
+    
+    private static byte getType(byte[] data){
+        ByteBuffer bBuffer = ByteBuffer.wrap(data);
+        
         int puntero = 240;
         boolean terminar = false;
         byte type = -1;
+        //Utilizo un "puntero" que me srive para recorrer el Magic cookie
+        //con el esquema inpuesto. Lee el codigoy la longitud ya aumneta
+        // en dos, comprueba que no sea el codigo buscado, y aumenta el puntero
+        //en la longitud inidicada.
         while (!terminar) {
             int codigo = bBuffer.get(puntero);
             ++puntero;
             int longitud = bBuffer.get(puntero);
             ++puntero;
             if (codigo == 53) {
+                //Se mantienen en bucle hasta encontrar el registro deseado
                 terminar = true;
                 type = bBuffer.get(puntero);
             }
@@ -116,7 +143,8 @@ public class ServidorDHCP {
         }
         return type;
     }
-
+    
+    //Genera la parte variable con los valores entregados por parametro.s
     private static byte[] generarMensaje(short flags, int type) {
         ByteBuffer mensaje = ByteBuffer.allocate(567);
         //Cabecera
@@ -142,7 +170,7 @@ public class ServidorDHCP {
         //Router
         mensaje.put((byte) 3);
         mensaje.put((byte) 4);
-        mensaje.put(router);
+        mensaje.put(ipRouter);
 //        //IP Cliente
         mensaje.put((byte) 50);
         mensaje.put((byte) 4);
@@ -165,6 +193,7 @@ public class ServidorDHCP {
         return mensaje.array();
     }
 
+    //Genera la parte fija del mensaje
     private static byte[] generarCabecera(short flags) {
 
         ByteBuffer mensaje = ByteBuffer.allocate(236);
@@ -191,7 +220,7 @@ public class ServidorDHCP {
         //giaddr
         mensaje.putInt(0);
         //chaddr (mac)
-        mensaje.put(mac);
+        mensaje.put(macCliente);
         return mensaje.array();
     }
 
